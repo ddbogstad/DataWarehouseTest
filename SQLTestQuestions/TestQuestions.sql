@@ -22,6 +22,13 @@ Any patients that dont have a risk level should also be included in the results.
 
 
 
+SELECT p.PersonName, r.RiskLevel, r.RiskDateTime
+FROM DBO.Person p
+LEFT JOIN (
+    SELECT PersonID, max(RiskDateTime) as MaxDate, RiskLevel, RiskDateTime
+    from DBO.Risk 
+    group by PersonID, RiskLevel, RiskDateTime
+) r on p.PersonID = r.PersonID
 
 
 
@@ -43,11 +50,9 @@ or be blank if no nickname exists.
 
 **********************/
 
+/* I am making an assumption that 2 distinct fields are being requested in the output: fullname and nickname. And, Fullname DOES NOT contain nickname */
 
-
-
-
-
+Select Replace(Replace(PersonName, Substring(PersonName,  Charindex('(',PersonName),Charindex(')',PersonName)-CharIndex('(',PersonName)),''),')','') As Fullname, Replace(Substring(PersonName,  Charindex('(',PersonName),Charindex(')',PersonName)-CharIndex('(',PersonName)),'(','') As 'Nickame' from Person
 
 
 
@@ -65,7 +70,20 @@ multiple levels Gold > Silver > Bronze
 
 **********************/
 
- 
+SELECT p.PersonName, r.RiskLevel, r.RiskDateTime
+FROM DBO.Person p
+LEFT JOIN (
+    SELECT TOP 10
+     PersonID, MAX(RiskDateTime) AS MaxDate, RiskLevel, RiskDateTime
+    FROM DBO.Risk 
+    GROUP BY PersonID, RiskLevel, RiskDateTime
+    ORDER BY PersonId, CASE WHEN RiskLevel = 'Gold' THEN '1'
+                            WHEN RiskLevel = 'Silver' THEN '2'
+                            WHEN RiskLevel = 'Bronze' THEN '3'
+                            ELSE RiskLevel 
+                        END ASC
+) r on p.PersonID = r.PersonID
+
 
 
 
@@ -106,6 +124,13 @@ Rewrite the query with any required changes in Answer B section below.
 --------Answer A--------------------
 
 
+	SELECT *
+	FROM DBO.Person P
+	INNER JOIN DBO.Risk R
+		ON R.PersonID = P.PersonID
+	WHERE P.DATEOFBIRTH < '1/1/1961'
+			AND P.ISACTIVE = '1'
+
 
 
 
@@ -113,8 +138,29 @@ Rewrite the query with any required changes in Answer B section below.
 
 
 ---------Answer B--------------------
+DECLARE @currentDate DateTime;
+DECLARE @currentYear Int;
+DECLARE @QueryYear Int;
+DECLARE @Age Int;
 
+SET @Age=55;
+SET @currentDate=getDate(); 
+SET @currentYear=DATEPART(yyyy,@currentDate)
+SET @QueryYear=@currentYear-@Age;
 
+	SELECT *
+	FROM DBO.Person P
+	INNER JOIN DBO.Risk R
+		ON R.PersonID = P.PersonID
+
+	WHERE P.PersonID IN 
+		(
+			SELECT personid
+			FROM Person
+			WHERE DATEOFBIRTH < Concat('1/1/',@QueryYear)
+		)
+
+	AND P.ISACTIVE = '1'
 
 
 
@@ -152,16 +198,85 @@ Sex
 
 **********************/
 
+ALTER TABLE Person Add FirstName VARCHAR(100);
+ALTER TABLE Person Add LastName VARCHAR(100);
+ALTER TABLE Person Add NickName VARCHAR(50);
+ALTER TABLE Person Add FullName VARCHAR(255);
+
+
+
+SELECT PersonName, PersonID, 
+       trim(Replace(Replace(PersonName, Substring(PersonName,  Charindex('(',PersonName),Charindex(')',PersonName)-CharIndex('(',PersonName)),''),')','')) As FullName, 
+	   Replace(Substring(PersonName,  Charindex('(',PersonName),Charindex(')',PersonName)-CharIndex('(',PersonName)),'(','') As NickName,
+	   FirstName, LastName
+	   INTO PersonCOPY
+FROM Person;
+Go
+
+Update PersonCOPY
+SET FirstName = SUBSTRING(FUllName, 0,CHARINDEX(' ',FullName) ),
+    LastName = SUBSTRING(Fullname, CHARINDEX(' ',FullName), LEN(FullName)-CHARINDEX(' ',FullName)+1 )
+    GO
+	
+	
+UPDATE Person 
+SET    Person.FirstName = PersonCopy.FirstName,
+	   Person.LastName = PersonCopy.LastName
+FROM   PersonCOPY
+       INNER JOIN Person
+       ON Person.PersonId = personCOPY.PersonId;
+go
 
 
 
 
+CREATE PROCEDURE PatientMatching @FirstName nvarchar(100), @LastName nvarchar(100), @DateofBirth DATETIME, @Sex nvarchar(10)
+AS
 
+	DECLARE @FirstNameFullCredit float = 1
+	DECLARE @FirstNamePartialCredit float = 0.5
+	DECLARE @FirstNameNoCredit float = 0	
+	DECLARE @LastNameFullCredit float = 0.8
+	DECLARE @LastNamePartialCredit float = 0.4
+	DECLARE @LastNameNoCredit float = 0	
+	DECLARE @DOBFullCredit float = 0.75
+	DECLARE @DOBPartialCredit float = 0.3
+	DECLARE @DOBNoCredit float = 0		
+	DECLARE @SexFullCredit float = 0.6
+	DECLARE @SexPartialCredit float = 0.25	
+	DECLARE @SexNoCredit float = 0	
+	DECLARE @MatchScore float = 0;
 
+Select personID As PatientID, 
+	FirstName, LastName, DateofBirth, Sex
+	, (CASE
+			WHEN Trim(FirstName) = @FirstName THEN @FirstNameFullCredit
+			WHEN Difference(trim(FirstName), @FirstName)=0 THEN @FirstNameNoCredit
+			ELSE @FirstNamePartialCredit
+		END) + 
+		(CASE
+			WHEN trim(LastName) = @LastName THEN @LastNameFullCredit
+			WHEN Difference(trim(LastName), @LastName)=0 THEN @LastNameNoCredit
+			ELSE @LastNamePartialCredit
+		END) +
+	   (CASE
+			WHEN DateofBirth = @DateofBirth THEN @DOBFullCredit
+			WHEN Difference(DateofBirth, @DateofBirth)=0 THEN @DOBNoCredit
+			ELSE @DOBPartialCredit
+		END) +	
+	  (CASE
+			WHEN Sex = @Sex THEN @SexFullCredit
+			WHEN Difference(Sex, @Sex)=0 THEN @SexNoCredit
+			ELSE @SexPartialCredit
+		END) As MatchScore
+	
+FROM Person
+ORDER BY MatchScore DESC
 
+GO;
 
-
-
+Exec PatientMatching 'Azra', 'Hales', '1997-07-24', 'Male'
+Go;
 
 /**********************
 
@@ -177,11 +292,42 @@ efficient when queried?
 
 **********************/
 
+A 
 
+ALTER TABLE Person ALTER COLUMN PersonID INTEGER NOT NULL;
+GO
 
+ALTER TABLE DBO.Person   
+ADD CONSTRAINT PK_Person_PersonID PRIMARY KEY CLUSTERED (PersonID);  
+GO  
 
+ALTER TABLE DBO.Risk  
+ADD CONSTRAINT FK_Risk_PersonID FOREIGN KEY (PersonID)
+	REFERENCES DBO.Person (PersonID)
+    ON UPDATE CASCADE  	
+;GO 
 
+ALTER TABLE DBO.Contracts  
+CONSTRAINT FK_Contracts_PersonKey FOREIGN KEY (PersonKey)     
+    REFERENCES Sales.SalesReason (SalesReasonID)        
+    ON UPDATE CASCADE    
+;GO 
+ 
 
+B 
+
+ALTER TABLE dbo.Person
+	    WITH NOCHECK ADD CONSTRAINT CK_Person_Sex
+	    CHECK (Sex in ('Male','Female'));
+
+C
+
+CREATE UNIQUE INDEX i1_Person ON Person (PersonId ASC, PersonName ASC, DateofBirth DESC); 
+GO
+CREATE INDEX i1_Risk ON Risk (PersonId ASC); 
+GO
+CREATE INDEX i1_Contracts ON Risk (PersonKey ASC); 
+GO
 
 
 
@@ -197,13 +343,15 @@ and a moving average of risk for that patient and contract in dbo.Risk.
 **********************/
 
 
-
-
-
-
-
-
-
+SELECT p.PersonID, c.ContractStartDate, r.RiskScore 
+      ,AVG(r.RiskScore) OVER(PARTITION BY p.PersonId) AS 'Moving Average' 
+  
+FROM Person p 
+INNER JOIN Risk r 
+	On r.PersonId=p.PersonId
+LEFT JOIN CONTRACTS c 
+	On p.PersonId=c.PersonKey  
+GO  
 
 
 /**********************
@@ -216,15 +364,36 @@ between 1/1/2010 and 50 days past the current date.
 
 **********************/
 
+SET NOCOUNT ON;
+GO
 
+DECLARE @MyCounter int;
+DECLARE @StartDate DateTime;
+DECLARE @CurrentDate DateTime;
+DECLARE @DateIndex DateTime;
 
+SET @StartDate = '1/1/2010';
+SET @CurrentDate = getDate();
+SET @DateIndex = @StartDate;
 
+WHILE (@DateIndex <= @CurrentDate)
+BEGIN;
 
+   INSERT INTO Dates (DateValue, DateDayOfMonth, DateDayOfYear, DateQuarter, DateWeekdayName, DateMonthName, DateYearMonth ) VALUES 
 
+       (@DateIndex, 
+	    DAY(@DateIndex), 
+		DATEPART(dayofyear,@DateIndex), 
+		DATEPART(quarter,@DateIndex), 
+		DATENAME(dw,DATEPART(dw,@DateIndex)),
+		MONTH(@DateIndex),
+		REPLACE(CONCAT(CAST(DATENAME(yyyy,@DateIndex) as char),CAST(DATEPART(mm,@DateIndex) as char)),' ','') );
 
-
-
-
+   SET @DateIndex = @DateIndex + 1;
+END;
+GO
+SET NOCOUNT OFF;
+GO
 
 
 
@@ -245,7 +414,26 @@ be the last day of that month. Use the dbo.Dates table if helpful.
 **********************/
 
 
-
+with rcte as (
+   select c1.PersonKey, c1.contractstartdate, c1.contractfinishdate
+     from Contracts c1
+left join Contracts c2 on c1.PersonKey=c2.personKey and c1.contractstartdate-1=c2.contractfinishdate
+    where c2.PersonKey is null
+	
+    union all
+	
+   select c1.PersonKey, c1.contractstartdate, c1.contractfinishdate
+     from rcte c1
+     join Contracts  c2 on c1.personKey=c2.personkey and c2.contractstartdate-1=c1.contractfinishdate
+)
+   select personkey as PersonId,
+          contractstartdate as attributionStartDate,
+          nullif(max(isnull(contractfinishdate,'55551231')),'55551231') contractfinishdate
+     from rcte 
+ group by personkey, contractstartdate
+ order by personkey 
+ option (maxrecursion 0)
+ 
 
 
 
